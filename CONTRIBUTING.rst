@@ -72,34 +72,79 @@ In short, if you are not a member of the `qucontrol organization`_,
 7. Push changes to the topic branch on *your* remote.
 8. Make a pull request against the base master branch through the Github website of your fork.
 
-The project contains a ``Makefile`` to help with development tasks. In your checked-out clone, do
+The project uses tox_ for automated testing accross multiple versions of Python
+and for various development tasks such as linting and generating the
+documentation. See :ref:`DevelopmentPrerequisites` for details.
 
-.. code-block:: console
+There is also a ``Makefile`` that wraps around tox, for
+convenience on Unix-based systems. In your checked-out clone, run
 
-    $ make help
+.. code-block:: shell
 
-to see the available make targets.
+    make help
+
+to see the available make targets. If you cannot use ``make``, but want to use
+``tox`` directly (e.g., on Windows), run
+
+.. code-block:: shell
+
+    tox -av
+
+to see a list of tox environments and a description. For the initial
+configuration of tox environments, you may have to run
+
+.. code-block:: shell
+
+    tox -e bootstrap
+
+in order to set up the ``tox.ini`` configuration file.
+
 
 If you are a member of the `qucontrol organization`_, there is no need to fork
 ``krotov`` - you can directly pull and push to ``git@github.com:qucontrol/krotov.git``.
 
-It is strongly recommended that you use the conda_ package manager. The
-``Makefile`` relies on conda to create local testing and documentation building
-environments (``make test`` and ``make docs``).
-
-Alternatively, you may  use ``make develop-test`` and ``make develop-docs`` to
-run the tests or generate the documentation within your active Python
-environment. You will have to ensure that all the necessary dependencies are
-installed. Also, you will not be able to test the package against all supported
-Python versions.
-You still can (and should) look at https://travis-ci.org/qucontrol/krotov/ to check that your commits pass all tests.
-
-
-.. _conda: https://conda.io/docs/
+.. _tox: https://tox.readthedocs.io
 
 .. _Aaron Meurer's Git Workflow Notes:  https://www.asmeurer.com/git-workflow/
 
 .. _qucontrol organization: https://github.com/qucontrol
+
+
+.. _DevelopmentPrerequisites:
+
+
+Development Prerequisites
+-------------------------
+
+Contributing to the package's developments requires that you have Python 3.7
+and tox_ installed. It is strongly recommended that you also have installations
+of all other supported Python versions. The recommended way to install multiple
+versions of Python at the same time is through pyenv_ (or pyenv-win_ on
+Windows).
+
+Alternatively, you may install conda_ (via the Anaconda_ or Miniconda_
+distributions, or also through pyenv_). As ``conda`` can create environments
+with any version of Python (independent of which Python version ``conda`` was
+originally installed with), this alleviates the need for managing multiple
+versions.
+The advantage of using conda_ is that you may be able to avoid installing the
+compilers necessary for Python extension packages. The disadvantage is that
+environment creation is slower and the resulting environments are bigger, and
+that you may run into occasional binary incompatibilities between conda packages.
+
+.. warning::
+   If you want to use `conda`, you must use the ``tox-conda.ini`` configuration
+   file. That is, run all ``make`` comands as e.g.
+   ``make TOXINI=tox-conda.ini test`` and ``tox`` commands as e.g.
+   ``tox -c tox-conda.ini -e py35-test,py36-test,py37-test``. Alternatively,
+   make ``tox-conda.ini`` the default by copying it to ``tox.ini``.
+
+.. _pyenv: https://github.com/pyenv/pyenv
+.. _pyenv-win: https://github.com/pyenv-win/pyenv-win
+.. _conda: https://conda.io/docs/
+.. _Anaconda: https://www.anaconda.com/distribution/
+.. _Miniconda: https://conda.io/en/latest/miniconda.html
+.. _QuTiP: http://qutip.org
 
 
 .. _BranchingModel:
@@ -119,17 +164,16 @@ able to run.
 
 To create a topic-branch named ``issue1``::
 
-    $ git branch issue1
-    $ git checkout issue1
+    git branch issue1
+    git checkout issue1
 
 You can then make commits, and push them to Github to trigger Continuous
 Integration testing::
 
-    $ git push -u origin issue1
+    git push -u origin issue1
 
 Commit early and often! At the same time, try to keep your topic branch
-as clean and organized as possible. If you have not yet pushed your topic
-branch to the "origin" remote:
+as clean and organized as possible.
 
 * Avoid having a series of meaningless granular commits like "start bugfix",
   "continue development", "add more work on bugfix", "fix typos", and so forth.
@@ -147,34 +191,22 @@ branch to the "origin" remote:
   current master (``git rebase master``). Avoid merging ``master`` into your
   topic branch. See `Merging vs. Rebasing`_.
 
-If you have already pushed your topic branch to the remote origin, you have to
-be a bit more careful. If you are sure that you are the only one working on
-that topic branch, you can still follow the above guidelines, and force-push
-the issue branch (``git push --force``). This also applies if you are an
-external contributor preparing a pull request in your own clone of the project.
-If you are collaborating with others on the topic branch, coordinate with them
-whether they are OK with rewriting the history. If not, merge instead of
-rebasing. You must never rewrite history on the ``master`` branch (nor will you
-be able to, as the ``master`` branch is "protected" and can only be force-pushed to
-in coordination with the project maintainer).  If something goes wrong with any
-advanced "history rewriting", there is always `"git reflog"`_ as a safety net
--- you will never lose work that was committed before.
+If you have already pushed your topic branch to the remote origin, you can
+force-push the issue branch (``git push --force``). If you are collaborating
+with others on the branch, coordinate with them before force pushing. A
+force-push rewrites history. You must never rewrite history on the ``master``
+branch (nor will you be able to, as the ``master`` branch is "protected" and
+can only be force-pushed to in coordination with the project maintainer).  If
+something goes wrong with any advanced "history rewriting", there is always
+`"git reflog"`_ as a safety net -- you will never lose work that was committed
+before.
 
 When you are done with a topic branch (the issue has been fixed), finish up by
-merging the topic branch back into ``master``::
+creating a pull-request for merging the branch into ``master`` (follow the
+propmts on the Github website).
 
-    $ git checkout master
-    $ git merge --no-ff issue1
+Summarize the changes of the branch relative to ``master`` in the pull request.
 
-The ``--no-ff`` option is critical, so that an explicit merge commit is created
-(especially if you rebased).  Summarize the changes of the branch relative to
-``master`` in the commit message.
-
-Then, you can push master and delete the topic branch both locally and on Github::
-
-    $ git push origin master
-    $ git push --delete origin issue1
-    $ git branch -D issue1
 
 .. _"Rewriting History" section of Pro Git book: https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History
 .. _Merging vs. Rebasing: https://www.atlassian.com/git/tutorials/merging-vs-rebasing
@@ -222,13 +254,19 @@ Testing
 
 The Krotov package includes a full test-suite using pytest_. We strive for a `test coverage`_ above 90%.
 
-From a checkout of the ``krotov`` repository, assuming conda_ is installed, you can use
+From a checkout of the ``krotov`` repository, you can use
 
-.. code-block:: console
+.. code-block:: shell
 
-    $ make test
+    make test
 
-to run the entire test suite.
+to run the entire test suite, or
+
+.. code-block:: shell
+
+    tox -e py35-test,py36-test,py37-test
+
+if ``make`` is not available.
 
 The tests are organized in the ``tests`` subfolder. It includes python scripts
 whose name start with ``test_``, which contain functions whose names also start
@@ -238,7 +276,7 @@ file (``*.rst``) are picked up (by the `pytest doctest plugin`_). Lastly, all
 :ref:`example notebooks <ContributeExamples>` are validated as a test, through
 the `nbval plugin`_.
 
-.. _test coverage: https://coveralls.io/github/qucontrol/krotov?branch=master
+.. _test coverage: https://codecov.io/gh/qucontrol/krotov
 .. _pytest: https://docs.pytest.org/en/latest/
 .. _doctests: https://docs.python.org/3.7/library/doctest.html
 .. _pytest doctest plugin: https://docs.pytest.org/en/latest/doctest.html
@@ -254,15 +292,16 @@ readability significantly.
 
 Beyond :pep:`8`, this project adopts the `Black code style`_, with
 ``--skip-string-normalization --line-length 79``. You can
-run ``make black-check`` to check adherence to the code style, and
-``make black`` to apply it.
+run ``make black-check`` or ``tox -e run-blackcheck`` to check adherence to the
+code style, and ``make black`` or ``tox -e run-black`` to apply it.
 
 .. _Black code style: https://github.com/ambv/black/#the-black-code-style
 
 Imports within python modules must be sorted according to the isort_
-configuration in ``setup.cfg``. The command ``make isort-check`` checks whether
-all imports are sorted correctly, and ``make isort`` modifies all Python
-modules in-place with the proper sorting.
+configuration in ``setup.cfg``. The command ``make isort-check`` or ``tox -e
+run-isortcheck`` checks whether all imports are sorted correctly, and ``make
+isort`` or ``tox -e run-isort`` modifies all Python modules in-place with the
+proper sorting.
 
 .. _isort: https://github.com/timothycrosley/isort#readme
 
@@ -271,16 +310,18 @@ pre-commit hooks that prevent committing code not does not meet the
 requirements. These hooks are managed through the `pre-commit framework`_.
 
 .. warning::
-   After cloning the ``krotov`` repository, you must run
-   ``make pre-commit-hooks``, or (if you have ``pre-commit`` installed)
-   ``pre-commit install`` from within the project root folder.
+   After cloning the ``krotov`` repository, you should run
+   ``make bootstrap``, ``tox -e bootstrap``, or ``python scripts/bootstrap.py``
+   from within the project root folder. These set up ``tox``, and the
+   pre-commit hooks
 
 .. _pre-commit framework: https://pre-commit.com
 
-You may use ``make flake8-check`` and ``make pylint-check`` for additional
-checks on the code with flake8_ and pylint_, but there is no strict requirement
-for a perfect score with either one of these linters. They only serve as a
-guideline for code that might be improved.
+You may use ``make flake8-check`` or ``tox -e run-flake8`` and ``make
+pylint-check`` or ``tox -e run-pylint`` for additional checks on the code with
+flake8_ and pylint_, but there is no strict requirement for a perfect score
+with either one of these linters. They only serve as a guideline for code that
+might be improved.
 
 .. _flake8: http://flake8.pycqa.org
 .. _pylint: http://pylint.pycqa.org
@@ -329,12 +370,17 @@ Also see :ref:`math-in-example-notebooks`.
 
 You may use the BibTeX_ plugin for citations.
 
-At any point, from a checkout of the ``krotov`` repository (and
-assuming you have conda_ installed), you may run
+At any point, from a checkout of the ``krotov`` repository, you may run
 
-.. code-block:: console
+.. code-block:: shell
 
-    $ make docs
+    make docs
+
+or
+
+.. code-block:: shell
+
+   tox -e docs
 
 to generate the documentation locally.
 
@@ -347,6 +393,45 @@ to generate the documentation locally.
 .. _mathjax: http://www.sphinx-doc.org/en/master/usage/extensions/math.html#module-sphinx.ext.mathjax
 .. _BibTeX: https://sphinxcontrib-bibtex.readthedocs.io/en/latest/
 .. _Matplotlib Sphinx cheat sheet: https://matplotlib.org/sampledoc/cheatsheet.html
+
+
+Deploy the documentation
+------------------------
+
+The documentation is automatically deployed to
+https://qucontrol.github.io/krotov/ (the gh-pages_ associated with the
+:mod:`krotov` package's Github repository) every time commits are pushed to
+Github. This is done via the Travis_ Continuous Integration service and Doctr_.
+The documentation for all versions of :mod:`krotov` is visible on the
+``gh-pages`` git branch. Any changes that are committed and pushed from this
+branch will be deployed to the online documentation. Do not routinely perform
+manual edits on the ``gh-pages`` branch! Let Doctr_ do its job of automatically
+deploying documentation instead.
+
+The deployment of the documentation is set up roughly as follows:
+
+* In ``.travis.yml``, there is "Docs" job set up that executes the
+  ``.travis/docs.sh`` script.
+* The ``.travis/docs.sh`` script builds the HTML documentation. It then
+  calls ``doctr deploy`` to deploy to ``gh-pages``.
+* ``doctr deploy`` copies the built documentation to the appropriate subfolder
+  on ``gh-pages``. `Doctr Versions Menu`_ atomatically provides a dynamically
+  rendered menu for switching between versions. It does this by creating a file
+  ``versions.json`` on the ``gh-pages`` branch.
+* ``doctr deploy`` commits the rendered documentation as well as the
+  ``versions.json`` and ``index.html`` files and pushes the ``gh-pages``
+  branch. It does this using the deploy key in ``./docs/doctr_deploy_key.enc``.
+  That file contains the private key matching the public ``doctr`` key in
+  https://github.com/qucontrol/krotov/settings/keys. The private key itself is
+  encrypted with `Travis' public key`_, so that only Travis can decrypt it with
+  their private key, and use it to authenticate while pushing to ``gh-pages``.
+
+.. _Doctr: https://drdoctr.github.io
+.. _Doctr Versions Menu: https://goerz.github.io/doctr_versions_menu
+.. _Travis: https://travis-ci.org
+.. _gh-pages: https://pages.github.com
+.. _Travis' public key: https://docs.travis-ci.com/user/encryption-keys/
+
 
 .. _ContributeExamples:
 
@@ -379,21 +464,21 @@ tests. For this to work properly, the following steps must be taken:
 * Before committing, re-evaluate all example notebooks in a well-defined
   virtual environment by running
 
-    .. code-block:: console
+    .. code-block:: shell
 
-        $ make notebooks
+        make notebooks
 
 * Check that the examples can be verified across different Python version by running
 
-    .. code-block:: console
+    .. code-block:: shell
 
-        $ make test
+        make test
 
 * You may also verify that the example is properly integrated in the documentation by running
 
-    .. code-block:: console
+    .. code-block:: shell
 
-        $ make docs
+        make docs
 
 
 .. _math-in-example-notebooks:
@@ -488,17 +573,29 @@ installing the package through pip_ may use the original version specification
 as well as the normalized one (or any other variation that normalizes to the
 same result).
 
-When making a release via
+
+Making a Release
+----------------
+
+Relesases can only be made by administrators of the Krotov Github repo who are
+also listed as Maintainers on https://pypi.org/project/krotov/.
+
+They must have GPG set up to allow for signed commits, and be able to locally
+produce documentation artifacts (``make docs-artifacts``).
+
+A release is made by running
 
 .. code-block:: shell
 
-    $ make release
+    make release
 
-the above versioning conventions will be taken into account automatically.
+which executes ``scripts/release.py``. Follow all the prompts.
 
 Releases must be tagged in git, using the version string prefixed by "v",
-e.g. ``v1.0.0-dev1`` and ``v1.0.0``. This makes them available at
-https://github.com/qucontrol/krotov/releases.
+e.g. ``v1.0.0-dev1`` and ``v1.0.0``. As prompted for by the release script,
+after pushing the tag, an official Github-release must be created manually at
+https://github.com/qucontrol/krotov/releases, with the proper release notes and
+the documentation artifacts as binary attachments.
 
 .. _Semantic Versioning: https://semver.org
 .. _"local version identifier": https://www.python.org/dev/peps/pep-0440/#local-version-identifiers
@@ -514,48 +611,7 @@ Developers' How-Tos
 
 The following assumes your current working directory is a checkout of
 ``krotov``, and that you have successfully run ``make test`` (which creates
-some local virtual environments that development relies on).
-
-
-How to install QuTiP from source ("illegal instruction" in QuTiP conda install)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The local conda environments that ``make test`` and other ``make`` targets set
-up in the ``.venv`` folder use pre-compiled ``conda`` packages for QuTiP by
-default. Unfortunately, some of QuTiP's conda packages are compiled
-incorrectly, and crash the entire Python process whenever the ``qutip`` package
-is imported (QuTiP issues `#951 <QutipIssue951_>`_, `#920 <QutipIssue920_>`_,
-and `#674 <QutipIssue674_>`_). You will see a message like "Illegal
-instruction" or something similar. This problem happens especially on Linux and
-sometimes other Unixes (like macOS). Luckily, on Linux you will usually have
-the necessary compilers to install QuTiP "from source" (via ``pip``). To enable
-automatic installation via ``pip``, make the following changes to the
-``Makefile``:
-
-* Un-comment the line::
-
-      CONDA_PACKAGES = cython numpy scipy
-
-  near the top of the ``Makefile``. Defining ``CONDA_PACKAGES`` as above will
-  ensure that the necessary build-requirements for QuTiP are available in the
-  conda environment.
-
-* Comment out all lines similar to::
-
-      @conda install -y --override-channels -c defaults -c conda-forge -p .venv/py37 qutip
-
-  By omitting this line, the ``Makefile`` will instead pick up the ``qutip``
-  dependency automatically from ``setup.py`` in the command following in the next
-  line::
-
-      .venv/py37/bin/python -m pip install -e .[dev]
-
- This change is necessary for all of the ``.venv`` environments.
-
-
-.. _QutipIssue951: https://github.com/qutip/qutip/issues/951
-.. _QutipIssue920: https://github.com/qutip/qutip/issues/920
-.. _QutipIssue674: https://github.com/qutip/qutip/issues/674
+the tox environments that development relies on).
 
 
 How to run a jupyter notebook server for working on the example notebooks
@@ -563,11 +619,11 @@ How to run a jupyter notebook server for working on the example notebooks
 
 A notebook server that is isolated to the proper testing environment can be started via the Makefile::
 
-    $ make jupyter-notebook
+    make jupyter-notebook
 
 This is equivalent to::
 
-    $ .venv/py37/bin/jupyter notebook --config=/dev/null
+    tox -e run-cmd -- jupyter notebook --config=/dev/null
 
 You may run this with your own options, if you prefer. The
 ``--config=/dev/null`` guarantees that the notebook server is completely
@@ -577,7 +633,7 @@ course, if you know what you're doing, you may want this.
 
 If you prefer, you may also use the newer jupyterlab::
 
-    $ make jupyter-lab
+    make jupyter-lab
 
 How to convert an example notebook to a script for easier debugging
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -586,10 +642,12 @@ Interactive debugging in notebooks is difficult. It becomes much easier if
 you convert the notebook to a script first.  To convert a notebook to an
 (I)Python script and run it with automatic debugging, execute e.g.::
 
-    $ ./.venv/py37/bin/jupyter nbconvert --to=python --stdout docs/notebooks/01_example_transmon_xgate.ipynb > debug.py
-    $ ./.venv/py37/bin/ipython --pdb debug.py
+    tox -e run-cmd -- jupyter nbconvert --to=python --stdout docs/notebooks/01_example_transmon_xgate.ipynb > debug.py
+    tox -e run-cmd -- ipython --pdb debug.py
 
-You can then also set a manual breakpoint by inserting the following line anywhere in the code::
+You can then also set a manual breakpoint by inserting the following line anywhere in the code:
+
+.. code-block:: python
 
     from IPython.terminal.debugger import set_trace; set_trace() # DEBUG
 
@@ -636,27 +694,36 @@ form of `test-driven development`_, you have two options:
 How to run a subset of tests
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To run e.g. only the tests defined in ``tests/test_krotov.py``, use::
+To run e.g. only the tests defined in ``tests/test_krotov.py``, use any of the following::
 
-    $ ./.venv/py37/bin/pytest tests/test_krotov.py
+    make test TESTS=tests/test_krotov.py
+
+    tox -e py37-test -- tests/test_krotov.py
+
+    tox -e run-cmd -- pytest tests/test_krotov.py
+
+    .tox/py37/bin/pytest tests/test_krotov.py
 
 See the `pytest test selection docs`_ for details.
+
 
 How to run only as single test
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Decorate the test with e.g. ``@pytest.mark.xxx``, and then run, e.g::
 
-    $ ./.venv/py37/bin/pytest -m xxx tests/
+    tox -e run-cmd -- pytest -m xxx tests/
 
 See the `pytest documentation on markers`_ for details.
+
 
 How to run only the doctests
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Run the following::
 
-$ ./.venv/py37/bin/pytest --doctest-modules src
+    tox -e run-cmd -- pytest --doctest-modules src
+
 
 How to go into an interactive debugger
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -664,7 +731,7 @@ How to go into an interactive debugger
 Optionally, install the `pdbpp` package into the testing environment, for a
 better experience::
 
-    $ ./.venv/py37/bin/python -m pip install pdbpp
+    tox -e run-cmd -- pip install pdbpp
 
 Then:
 
@@ -674,7 +741,7 @@ Then:
 
 - Run ``pytest`` with the option ``-s``, e.g.::
 
-    $ ./.venv/py37/bin/pytest -m xxx -s tests/
+    tox -e run-cmd -- pytest -m xxx -s tests/
 
 You may also see the `pytest documentation on automatic debugging`_.
 

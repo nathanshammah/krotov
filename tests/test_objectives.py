@@ -1,5 +1,7 @@
 """Tests for krotov.Objective in isolation"""
 import copy
+import copyreg
+import io
 import os
 import pickle
 from collections import OrderedDict
@@ -9,9 +11,15 @@ import numpy as np
 import pytest
 import qutip
 import scipy
-from qutip import identity, ket, sigmam, sigmap, sigmax, sigmaz, tensor
+from qutip import identity, ket, sigmam, sigmap, sigmax, sigmay, sigmaz, tensor
 
 import krotov
+
+
+try:
+    import qutip.qip.gates as qutip_gates
+except ImportError:
+    import qutip.qip.operations.gates as qutip_gates
 
 
 @pytest.fixture
@@ -291,6 +299,18 @@ def test_plug_in_array_controls_as_func():
     assert u2_func(tlist[2] + 0.6 * dt, None) == u2[3]
 
 
+def test_gate_objectives_single_qubit_gate():
+    """Test initialization of objectives for simple single-qubit gate"""
+    basis = [ket([0]), ket([1])]
+    gate = sigmay()  # = -i|0⟩⟨1| + i|1⟩⟨0|
+    H = [sigmaz(), [sigmax(), lambda t, args: 1.0]]
+    objectives = krotov.objectives.gate_objectives(basis, gate, H)
+    assert objectives == [
+        krotov.Objective(initial_state=basis[0], target=(1j * basis[1]), H=H),
+        krotov.Objective(initial_state=basis[1], target=(-1j * basis[0]), H=H),
+    ]
+
+
 def test_gate_objectives_shape_error():
     """Test that trying to construct gate objectives with a gate whose shape
     mismatches the basis throws an exception"""
@@ -335,10 +355,14 @@ def test_gate_objectives_pe():
     ]
     objectives = krotov.gate_objectives(basis, 'PE', H)
     assert len(objectives) == 4
+    bell_basis_states = bell_basis(basis)
+    for state in bell_basis_states:
+        assert isinstance(state, qutip.Qobj)
     for i in range(4):
-        assert objectives[i] == krotov.Objective(
-            initial_state=bell_basis(basis)[i], target='PE', H=H
+        expected_objective = krotov.Objective(
+            initial_state=bell_basis_states[i], target='PE', H=H
         )
+        assert objectives[i] == expected_objective
     assert krotov.gate_objectives(basis, 'perfect_entangler', H) == objectives
     assert krotov.gate_objectives(basis, 'perfect entangler', H) == objectives
     assert krotov.gate_objectives(basis, 'Perfect Entangler', H) == objectives
@@ -388,7 +412,7 @@ def test_gate_objectives_3states(two_qubit_liouvillian):
     """Test the initialization of the "3states" objectives"""
     L = two_qubit_liouvillian
     basis = [qutip.ket(n) for n in [(0, 0), (0, 1), (1, 0), (1, 1)]]
-    CNOT = qutip.gates.cnot()
+    CNOT = qutip_gates.cnot()
     objectives = krotov.objectives.gate_objectives(
         basis, CNOT, L, liouville_states_set='3states'
     )
@@ -440,7 +464,7 @@ def test_gate_objectives_5states(two_qubit_liouvillian):
     """Test the initialization of the "d + 1" objectives"""
     L = two_qubit_liouvillian
     basis = [qutip.ket(n) for n in [(0, 0), (0, 1), (1, 0), (1, 1)]]
-    CNOT = qutip.gates.cnot()
+    CNOT = qutip_gates.cnot()
     objectives = krotov.objectives.gate_objectives(
         basis, CNOT, L, liouville_states_set='d+1'
     )
@@ -476,7 +500,7 @@ def test_gate_objectives_16states(two_qubit_liouvillian):
     """Test the initialization of the "full" objectives"""
     L = two_qubit_liouvillian
     basis = [qutip.ket(n) for n in [(0, 0), (0, 1), (1, 0), (1, 1)]]
-    CNOT = qutip.gates.cnot()
+    CNOT = qutip_gates.cnot()
     objectives = krotov.objectives.gate_objectives(
         basis, CNOT, L, liouville_states_set='full'
     )
@@ -522,7 +546,7 @@ def test_transmon_3states_objectives():
     weights = [20, 1, 1]
     objectives = krotov.gate_objectives(
         basis,
-        qutip.gates.sqrtiswap(),
+        qutip_gates.sqrtiswap(),
         L,
         liouville_states_set='3states',
         weights=weights,
@@ -671,7 +695,15 @@ def test_objective_pickle(objective_with_c_ops):
     callable controls (which are not pickleable) are replaced by a
     placeholder"""
     obj1 = objective_with_c_ops
-    obj2 = pickle.loads(pickle.dumps(obj1))
+    with io.BytesIO() as buffer:
+        pickler = pickle.Pickler(buffer)
+        pickler.dispatch_table = copyreg.dispatch_table.copy()
+        pickler.dispatch_table[
+            krotov.objectives.Objective
+        ] = krotov.objectives._Objective_reduce
+        pickler.dump(obj1)
+        buffer.seek(0)
+        obj2 = pickle.load(buffer)
     assert obj2 is not obj1
     assert obj2 != obj1
     assert str(obj2) != str(obj1)
@@ -692,7 +724,15 @@ def test_objective_pickle(objective_with_c_ops):
 
     obj2.weight = 0.5
     obj2.xxx = 'something'
-    obj3 = pickle.loads(pickle.dumps(obj2))
+    with io.BytesIO() as buffer:
+        pickler = pickle.Pickler(buffer)
+        pickler.dispatch_table = copyreg.dispatch_table.copy()
+        pickler.dispatch_table[
+            krotov.objectives.Objective
+        ] = krotov.objectives._Objective_reduce
+        pickler.dump(obj2)
+        buffer.seek(0)
+        obj3 = pickle.load(buffer)
     assert hasattr(obj3, 'weight')
     assert hasattr(obj3, 'xxx')
     assert obj3 == obj2

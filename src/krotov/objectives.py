@@ -15,9 +15,10 @@ from functools import partial
 
 import numpy as np
 import qutip
+from qutip.solver import Options as QutipSolverOptions
 from qutip.solver import Result as QutipSolverResult
 
-from .structural_conversions import (
+from .conversions import (
     _nested_list_shallow_copy,
     control_onto_interval,
     discretize,
@@ -35,12 +36,13 @@ __all__ = [
 ]
 
 
-FIX_QUTIP_932 = True
+FIX_QUTIP_932 = sys.platform != "linux"
 """Workaround for `QuTiP issue 932`_.
 
-If True, and only when running on macOS, in :meth:`Objective.mesolve`,
-replace any array controls with an equivalent function. This results in a
-signficant slowdown of the propagation, as it circumvents the use of Cython.
+If True, in :meth:`Objective.mesolve`, replace any array controls with an
+equivalent function. This results in a signficant slowdown of the propagation,
+as it circumvents the use of Cython. Defaults to False on Linux, and True on
+any non-Linux system.
 
 .. _QuTiP issue 932: https://github.com/qutip/qutip/issues/932
 """
@@ -256,7 +258,15 @@ class Objective:
         return adjoint_objective
 
     def mesolve(
-        self, tlist, rho0=None, H=None, c_ops=None, e_ops=None, **kwargs
+        self,
+        tlist,
+        *,
+        rho0=None,
+        H=None,
+        c_ops=None,
+        e_ops=None,
+        args=None,
+        **kwargs
     ):
         """Run :func:`qutip.mesolve.mesolve` on the system of the objective.
 
@@ -279,6 +289,8 @@ class Objective:
             e_ops (list or None): A list of operators whose expectation values
                 to calculate, for every point in `tlist`. See
                 :func:`qutip.mesolve.mesolve`.
+            args (dict or None): dictionary of parameters for time-dependent
+                Hamiltonians and collapse operators
             **kwargs: All further arguments will be passed to
                 :func:`qutip.mesolve.mesolve`.
 
@@ -294,8 +306,9 @@ class Objective:
             H = self.H
         if c_ops is None:
             c_ops = self.c_ops
-        if FIX_QUTIP_932 and sys.platform == "darwin":  # pragma: no cover
-            # "darwin" = macOS; the "pragma" excludes from coverage analysis
+        if args is None:
+            args = {}
+        if FIX_QUTIP_932:  # pragma: no cover
             controls = extract_controls([self])
             pulses_mapping = extract_controls_mapping([self], controls)
             mapping = pulses_mapping[0]  # "first objective" (dummy structure)
@@ -306,8 +319,20 @@ class Objective:
                 )
                 for (ic, c_op) in enumerate(self.c_ops)
             ]
+
+        # local instantations for `options` is to work around
+        # https://github.com/qutip/qutip/issues/1061
+        options = kwargs.pop('options', QutipSolverOptions())
+
         return qutip.mesolve(
-            H=H, rho0=rho0, tlist=tlist, c_ops=c_ops, e_ops=e_ops, **kwargs
+            H=H,
+            rho0=rho0,
+            tlist=tlist,
+            c_ops=c_ops,
+            e_ops=e_ops,
+            args=args,
+            options=options,
+            **kwargs
         )
 
     def propagate(
@@ -319,6 +344,7 @@ class Objective:
         H=None,
         c_ops=None,
         e_ops=None,
+        args=None,
         expect=qutip.expect
     ):
         """Propagate the system of the objective over the entire time grid.
@@ -352,6 +378,8 @@ class Objective:
             c_ops = self.c_ops
         if e_ops is None:
             e_ops = []
+        if args is None:
+            args = {}
         result = QutipSolverResult()
         try:
             result.solver = propagator.__name__
@@ -379,7 +407,7 @@ class Objective:
         pulses_mapping = extract_controls_mapping([self], controls)
         mapping = pulses_mapping[0]  # "first objective" (dummy structure)
         pulses = [  # defined on the tlist intervals
-            control_onto_interval(discretize(control, tlist))
+            control_onto_interval(discretize(control, tlist, args=(args,)))
             for control in controls
         ]
         for time_index in range(len(tlist) - 1):  # index over intervals
@@ -549,20 +577,41 @@ class Objective:
     def __repr__(self):
         return "%s[%s]" % (self.__class__.__name__, str(self))
 
-    def __getstate__(self):
-        # Return data for the pickle serialization of an objective.
-        #
-        # This may not preserve time-dependent controls, and is only to enable
-        # the serialization of :class:`.Result` objects.
-        state = copy.copy(self.__dict__)
-        # Remove the unpicklable entries.
-        state['H'] = _remove_functions_from_nested_list(state['H'])
-        state['c_ops'] = _remove_functions_from_nested_list(state['c_ops'])
-        return state
+
+def _Objective_reduce_init(initial_state, H, target, c_ops):
+    # args-only version of Objective.__init__, for _Objective_reduce
+    return Objective(
+        initial_state=initial_state, H=H, target=target, c_ops=c_ops
+    )
+
+
+def _Objective_reduce(obj):
+    """Reduce :class:`Objective` for pickling.
+
+    This is a reduction function for customized pickling, see
+    :func:`copyreg.pickle`. It is used in :meth:`.Result.dump`.
+
+    In the standard-library-pickle, lambdas are not pickleable, so we replace
+    those non-pickleable entries with a placeholder.
+    """
+    return (
+        _Objective_reduce_init,
+        (
+            obj.initial_state,
+            _remove_functions_from_nested_list(obj.H),
+            obj.target,
+            _remove_functions_from_nested_list(obj.c_ops),
+        ),
+        {
+            k: v
+            for (k, v) in obj.__dict__.items()
+            if k not in obj._default_attribs
+        },
+    )
 
 
 class _ControlPlaceholder:
-    """Placeholder for a control function, for pickling"""
+    """Placeholder for a control function, for pickling."""
 
     def __init__(self, id):
         self.id = id
@@ -656,11 +705,12 @@ def gate_objectives(
     basis_states,
     gate,
     H,
+    *,
     c_ops=None,
     local_invariants=False,
     liouville_states_set=None,
     weights=None,
-    normalize_weights=True,
+    normalize_weights=True
 ):
     r"""Construct a list of objectives for optimizing towards a quantum gate
 
@@ -764,13 +814,17 @@ def gate_objectives(
 
         * A two-qubit gate, up to single-qubit operation ("local invariants"):
 
+            >>> CNOT = qutip.Qobj(
+            ...     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
+            ...     dims=[[2, 2], [2, 2]]
+            ... )
             >>> objectives = gate_objectives(
-            ...     basis, qutip.gates.cnot(), H, local_invariants=True
+            ...     basis, CNOT, H, local_invariants=True
             ... )
             >>> for i in range(4):
             ...     assert objectives[i] == Objective(
             ...        initial_state=bell_basis(basis)[i],
-            ...        target=qutip.gates.cnot(),
+            ...        target=CNOT,
             ...        H=H
             ...     )
 
@@ -781,7 +835,7 @@ def gate_objectives(
             ...     tensor(sigmam(), identity(2)),
             ...     tensor(identity(2), sigmam())])
             >>> objectives = gate_objectives(
-            ...     basis, qutip.gates.cnot(), L,
+            ...     basis, CNOT, L,
             ...     liouville_states_set='3states',
             ...     weights=[20, 1, 1]
             ... )
@@ -825,7 +879,7 @@ def gate_objectives(
           pure-state density matrices::
 
             >>> objectives = gate_objectives(
-            ...     basis, qutip.gates.cnot(), L,
+            ...     basis, CNOT, L,
             ...     liouville_states_set='d+1'
             ... )
 
@@ -846,7 +900,7 @@ def gate_objectives(
           Liouville space basis::
 
             >>> objectives = gate_objectives(
-            ...     basis, qutip.gates.cnot(), L,
+            ...     basis, CNOT, L,
             ...     liouville_states_set='full'
             ... )
 
@@ -894,7 +948,12 @@ def gate_objectives(
             "basis states"
         )
     mapped_basis_states = [
-        sum([gate[i, j] * basis_states[i] for i in range(gate.shape[0])])
+        sum(
+            [
+                complex(gate[i, j]) * basis_states[i]
+                for i in range(gate.shape[0])
+            ]
+        )
         for j in range(gate.shape[1])
     ]
     # Lots of gates just rearrange the basis states, and we can avoid some
@@ -992,7 +1051,7 @@ def _gate_objectives_li_pe(basis_states, gate, H, c_ops):
     ]
 
 
-def ensemble_objectives(objectives, Hs):
+def ensemble_objectives(objectives, Hs, *, keep_original_objectives=True):
     """Extend `objectives` for an "ensemble optimization"
 
     This creates a list of objectives for an optimization for robustness with
@@ -1006,14 +1065,22 @@ def ensemble_objectives(objectives, Hs):
         objectives (list[Objective]): The $n$ original objectives
         Hs (list): List of $m$ variations of the original
             Hamiltonian/Liouvillian
+        keep_original_objectives (bool): If given as False, drop the original
+            objectives from the result. This is especially useful if `Hs`
+            contains the original Hamiltonian (which is often more
+            straightforward)
 
     Returns:
         list[Objective]: List of $n (m+1)$ new objectives that consists of the
         original objectives, plus one copy of the original objectives per
         element of `Hs` where the `H` attribute of each objectives is
-        replaced by that element.
+        replaced by that element. Alternatively, for
+        ``keep_original_objectives=False``, list of $n m$ new objectives
+        without the original objectives.
     """
-    new_objectives = copy.copy(objectives)
+    new_objectives = []
+    if keep_original_objectives:
+        new_objectives = copy.copy(objectives)
     for H in Hs:
         for obj in objectives:
             new_objectives.append(
@@ -1203,7 +1270,6 @@ def _summarize_component(
         dims = _obj_dims_str(obj, use_unicode)
         if key in count_cache:
             count = count_cache[key]
-            count_str = str(count)
         else:
             count = counter[str_pattern]
             count_cache[key] = count
@@ -1214,6 +1280,7 @@ def _summarize_component(
                 counter['H{count}[{dims}]'] += 1
             elif str_pattern == 'H{count}[{dims}]':
                 counter['A{count}[{dims}]'] += 1
+        count_str = str(count)
         if use_unicode:
             # transform all digits in counter to unicode subscripts.
             # Subscript symbols start at code point 0x2080

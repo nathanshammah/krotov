@@ -5,16 +5,11 @@ import time
 from functools import partial
 
 import numpy as np
+import threadpoolctl
 from qutip import Qobj
 from qutip.parallel import serial_map
 
-from .info_hooks import chain
-from .mu import derivative_wrt_pulse
-from .propagators import Propagator, expm
-from .result import Result
-from .second_order import _overlap
-from .shapes import one_shape, zero_shape
-from .structural_conversions import (
+from .conversions import (
     control_onto_interval,
     discretize,
     extract_controls,
@@ -23,6 +18,13 @@ from .structural_conversions import (
     pulse_onto_tlist,
     pulse_options_dict_to_list,
 )
+from .info_hooks import chain
+from .mu import derivative_wrt_pulse
+from .parallelization import USE_THREADPOOL_LIMITS
+from .propagators import Propagator, expm
+from .result import Result
+from .second_order import _overlap
+from .shapes import one_shape, zero_shape
 
 
 __all__ = ['optimize_pulses']
@@ -48,9 +50,10 @@ def optimize_pulses(
     continue_from=None,
     skip_initial_forward_propagation=False,
     norm=None,
-    overlap=None
+    overlap=None,
+    limit_thread_pool=None
 ):
-    r"""Use Krotov's method to optimize towards the given `objectives`
+    r"""Use Krotov's method to optimize towards the given `objectives`.
 
     Optimize all time-dependent controls found in the Hamiltonians or
     Liouvillians of the given `objectives`.
@@ -59,44 +62,68 @@ def optimize_pulses(
         objectives (list[Objective]): List of objectives
         pulse_options (dict): Mapping of time-dependent controls found in the
             Hamiltonians of the objectives to a dictionary of options for that
-            control. There must be an options-dict for each control. As numpy
+            control. There must be options given for *every* control. As numpy
             arrays are unhashable and thus cannot be used as dict keys, the
             options for a control that is an array must be set using the key
-            ``pulse_options[id(control)] = ...``. The options-dict of any
-            particular control must contain the following keys:
+            ``id(control)`` (see the example below). The options of any
+            particular control *must* contain the following keys:
 
             * ``'lambda_a'``: the Krotov step size (float value). This governs
               the overall magnitude of the pulse update. Large values result in
               small updates. Small values may lead to sharp spikes and
               numerical instability.
 
-            * ``'shape'`` : Function S(t) in the range [0, 1] that scales the
-              pulse update for the pulse value at t. This can be used to ensure
-              boundary conditions (S(0) = S(T) = 0), and enforce smooth
-              switch-on and switch-off. This can be a callable that takes a
-              single argument `t`; or the values 1 or 0 for a constant
+            * ``'update_shape'`` : Function S(t) in the range [0, 1] that
+              scales the pulse update for the pulse value at t. This can be
+              used to ensure boundary conditions (S(0) = S(T) = 0), and enforce
+              smooth switch-on and switch-off. This can be a callable that
+              takes a single argument `t`; or the values 1 or 0 for a constant
               update-shape. The value 0 disables the optimization of that
               particular control.
 
+            In addition, the following keys *may* occur:
+
+            * ``'args'``: If the control is a callable with arguments
+              ``(t, args)`` (as required by QuTiP), a dict of argument values
+              to pass as `args`. If ``'args'`` is not specified via the
+              `pulse_options`, controls will be discretized using the default
+              ``args=None``.
+
             For example, for `objectives` that contain a Hamiltonian of the
             form ``[H0, [H1, u], [H2, g]]``, where ``H0``, ``H1``, and ``H2``
-            are :class:`~qutip.Qobj` instances, ``u`` is a numpy array of
-            control values, and ``g`` is a control function (a callable), a
-            possible value for `pulse_options` would look like this::
+            are :class:`~qutip.Qobj` instances, ``u`` is a numpy array
+
+            .. doctest::
+
+                >>> u = numpy.zeros(1000)
+
+            and ``g`` is a control function
+
+            .. doctest::
+
+                >>> def g(t, args):
+                ...     E0 = args.get('E0', 0.0)
+                ...     return E0
+
+            then a possible value for `pulse_options` would look like this:
+
+            .. doctest::
 
                 >>> from krotov.shapes import flattop
                 >>> from functools import partial
-                >>> u = numpy.zeros(1000)
-                >>> g = lambda t, args: 0.0
                 >>> pulse_options = {
-                ...     id(u): {'lambda_a': 1.0, 'shape': 1},
+                ...     id(u): {'lambda_a': 1.0, 'update_shape': 1},
                 ...     g: dict(
                 ...         lambda_a=1.0,
-                ...         shape=partial(
+                ...         update_shape=partial(
                 ...             flattop, t_start=0, t_stop=10, t_rise=1.5
-                ...         )
+                ...         ),
+                ...         args=dict(E0=1.0)
                 ...     )
                 ... }
+
+            The use of :class:`dict` and the ``{...}`` syntax are completely
+            equivalent, but :class:`dict` is better for nested indentation.
 
         tlist (numpy.ndarray): Array of time grid values, cf.
             :func:`~qutip.mesolve.mesolve`
@@ -180,6 +207,14 @@ def optimize_pulses(
             :meth:`qutip.Qobj.overlap` for Hilbert space states and to the
             Hilbert-Schmidt norm $\tr[\rho_1^\dagger \rho2]$ for density
             matrices or operators.
+        limit_thread_pool (bool or None): If True, try to eliminate
+            multi-threading in low-level numerical routines like :mod:`numpy`,
+            via the use of the ``threadpoolctl`` package. Single-threaded
+            execution is usually faster, but if you know what you are doing and
+            can benchmark multi-threaded execution, you may set this to False
+            to place no restrictions on multi-threading. The default value
+            (None) delegates to
+            :obj:`krotov.parallelization.USE_THREADPOOL_LIMITS`.
 
     Returns:
         Result: The result of the optimization.
@@ -195,6 +230,12 @@ def optimize_pulses(
 
     # Initialization
     logger.info("Initializing optimization with Krotov's method")
+    thread_pool_limiter = None
+    if limit_thread_pool is None:
+        limit_thread_pool = USE_THREADPOOL_LIMITS
+    if limit_thread_pool:
+        logger.debug("Setting threadpoolctrl.threadpool_limits")
+        thread_pool_limiter = threadpoolctl.threadpool_limits(limits=1)
     if mu is None:
         mu = derivative_wrt_pulse
     second_order = sigma is not None
@@ -275,7 +316,7 @@ def optimize_pulses(
     fw_states_T = [states[-1] for states in forward_states]
     tau_vals = np.array(
         [
-            overlap(state_T, obj.target)
+            overlap(obj.target, state_T)
             for (state_T, obj) in zip(fw_states_T, objectives)
         ]
     )
@@ -288,33 +329,46 @@ def optimize_pulses(
         forward_states0 = forward_states = None
 
     info = None
-    optimized_pulses = guess_pulses
+    optimized_pulses = copy.deepcopy(guess_pulses)
+    info_hook_static_args = dict(
+        # these do no change between iterations (although
+        # `modify_params_after_iter` may modify any of these, to
+        # the extent that they're mutable)
+        objectives=objectives,
+        adjoint_objectives=adjoint_objectives,
+        lambda_vals=lambda_vals,
+        shape_arrays=shape_arrays,
+        tlist=tlist,
+        propagator=propagator,
+        chi_constructor=chi_constructor,
+        mu=mu,
+        sigma=sigma,
+        iter_start=iter_start,
+        iter_stop=iter_stop,
+    )
     if info_hook is not None:
         info = info_hook(
-            objectives=objectives,
-            adjoint_objectives=adjoint_objectives,
             backward_states=None,
             forward_states=forward_states,
             forward_states0=forward_states0,
             guess_pulses=guess_pulses,
             optimized_pulses=optimized_pulses,
             g_a_integrals=g_a_integrals,
-            lambda_vals=lambda_vals,
-            shape_arrays=shape_arrays,
             fw_states_T=fw_states_T,
-            tlist=tlist,
             tau_vals=tau_vals,
             start_time=tic,
             stop_time=toc,
             iteration=0,
             info_vals=[],
             shared_data={},
+            **info_hook_static_args,
         )
 
     # Initialize Result object
     result.tlist = tlist
     result.objectives = objectives
     result.guess_controls = guess_controls
+    result.optimized_controls = optimized_pulses
     result.controls_mapping = pulses_mapping
     if continue_from is None:
         # we only store information about the "0" iteration if we're starting a
@@ -446,7 +500,7 @@ def optimize_pulses(
         fw_states_T = fw_states
         tau_vals = np.array(
             [
-                overlap(fw_state_T, obj.target)
+                overlap(obj.target, fw_state_T)
                 for (fw_state_T, obj) in zip(fw_states_T, objectives)
             ]
         )
@@ -456,24 +510,20 @@ def optimize_pulses(
         # Display information about iteration
         if info_hook is not None:
             info = info_hook(
-                objectives=objectives,
-                adjoint_objectives=adjoint_objectives,
                 backward_states=backward_states,
                 forward_states=forward_states,
                 forward_states0=forward_states0,
                 fw_states_T=fw_states_T,
-                tlist=tlist,
                 guess_pulses=guess_pulses,
                 optimized_pulses=optimized_pulses,
                 g_a_integrals=g_a_integrals,
-                lambda_vals=lambda_vals,
-                shape_arrays=shape_arrays,
                 tau_vals=tau_vals,
                 start_time=tic,
                 stop_time=toc,
                 info_vals=result.info_vals,
                 shared_data={},
                 iteration=krotov_iteration,
+                **info_hook_static_args,
             )
         # Update optimization `result` with info from finished iteration
         result.iters.append(krotov_iteration)
@@ -483,8 +533,12 @@ def optimize_pulses(
         if not np.all(tau_vals == None):  # noqa
             result.tau_vals.append(tau_vals)
         result.optimized_controls = optimized_pulses
+        # pulses (time intervals) will be converted to controls (time grid
+        # points) farther below in "Finalize"
         if store_all_pulses:
-            result.all_pulses.append(optimized_pulses)
+            # we need to make a copy, so that the conversion in "Finalize"
+            # doesn't affect `all_pulses` as well.
+            result.all_pulses.append(copy.deepcopy(optimized_pulses))
         result.states = fw_states_T
 
         logger.info("Finished Krotov iteration %d", krotov_iteration)
@@ -493,6 +547,11 @@ def optimize_pulses(
         msg = None
         if check_convergence is not None:
             msg = check_convergence(result)
+        if krotov_iteration >= info_hook_static_args['iter_stop']:
+            # modify_params_after_iter may change iter_stop!
+            iter_stop = info_hook_static_args['iter_stop']
+            result.message = "Reached %d iterations" % iter_stop
+            break
         if bool(msg) is True:  # this is not an anti-pattern!
             result.message = "Reached convergence"
             if isinstance(msg, str):
@@ -523,6 +582,9 @@ def optimize_pulses(
     result.end_local_time = time.localtime()
     for i, pulse in enumerate(optimized_pulses):
         result.optimized_controls[i] = pulse_onto_tlist(pulse)
+    if thread_pool_limiter is not None:
+        logger.debug("Unsetting threadpoolctrl.threadpool_limits")
+        thread_pool_limiter.unregister()
     return result
 
 
@@ -535,7 +597,7 @@ def _shape_val_to_callable(val):
         if callable(val):
             return val
         else:
-            raise ValueError("shape must be a callable")
+            raise ValueError("update_shape must be a callable")
 
 
 def _enforce_shape_array_range(shape_array):
@@ -549,7 +611,7 @@ def _enforce_shape_array_range(shape_array):
     # sure that it will deviate by a significantly larger error.
     if np.min(shape_array) < -0.01 or np.max(shape_array) > 1.01:
         raise ValueError(
-            "Update shapes ('shape' in pulse options-dict) must have "
+            "Update shapes ('update_shape' in pulse options-dict) must have "
             "values in the range [0, 1], not [%s, %s]"
             % (np.min(shape_array), np.max(shape_array))
         )
@@ -582,11 +644,16 @@ def _initialize_krotov_controls(objectives, pulse_options, tlist):
     options_list = pulse_options_dict_to_list(pulse_options, guess_controls)
     try:
         guess_controls = [
-            discretize(control, tlist) for control in guess_controls
+            discretize(
+                control,
+                tlist,
+                args=(pulse_options[control].get('args', None),),
+            )
+            for control in guess_controls
         ]
     except (TypeError, np.ComplexWarning) as exc_info:
         raise ValueError(
-            "Cannot discretize controls: %s. Note that"
+            "Cannot discretize controls: %s. Note that "
             "all controls must be real-valued. Complex controls must be "
             "split into an independent real and imaginary part in the "
             "objectives before passing them to the optimization" % exc_info
@@ -607,16 +674,16 @@ def _initialize_krotov_controls(objectives, pulse_options, tlist):
     for options in options_list:
         try:
             S = discretize(
-                _shape_val_to_callable(options['shape']), tlist, args=()
+                _shape_val_to_callable(options['update_shape']), tlist, args=()
             )
         except KeyError:
             raise ValueError(
                 "Each value in pulse_options must be a dict that contains "
-                "the key 'shape'."
+                "the key 'update_shape'."
             )
         except (TypeError, np.ComplexWarning) as exc_info:
             raise ValueError(
-                "Update shapes ('shape' in pulse options-dict) must be "
+                "Update shapes ('update_shape' in pulse options-dict) must be "
                 "real-valued: %s" % exc_info
             )
         shape_arrays.append(

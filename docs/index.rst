@@ -4,6 +4,9 @@ Welcome to the Krotov package's documentation!
 .. image:: https://img.shields.io/badge/github-qucontrol/krotov-blue.svg
    :alt: Source code on Github
    :target: https://github.com/qucontrol/krotov
+.. image:: https://img.shields.io/badge/docs-doctr-blue.svg
+   :alt: Documentation
+   :target: https://qucontrol.github.io/krotov
 .. image:: https://img.shields.io/pypi/v/krotov.svg
    :alt: Krotov on the Python Package Index
    :target: https://pypi.python.org/pypi/krotov
@@ -16,18 +19,18 @@ Welcome to the Krotov package's documentation!
 .. image:: https://ci.appveyor.com/api/projects/status/1cbm24w04jmxjpjh?svg=true
    :alt: AppVeyor Continuous Integration
    :target: https://ci.appveyor.com/project/goerz/krotov
-.. image:: https://img.shields.io/coveralls/github/qucontrol/krotov/master.svg
-   :alt: Coveralls
-   :target: https://coveralls.io/github/qucontrol/krotov?branch=master
+.. image:: https://codecov.io/gh/qucontrol/krotov/branch/master/graph/badge.svg
+   :alt: Codecov
+   :target: https://codecov.io/gh/qucontrol/krotov
 .. image:: https://img.shields.io/badge/License-BSD-green.svg
    :alt: BSD License
    :target: https://opensource.org/licenses/BSD-3-Clause
-.. image:: https://readthedocs.org/projects/krotov/badge/?version=latest
-   :alt: Documentation Status
-   :target: https://krotov.readthedocs.io/en/latest/?badge=latest
-.. image:: https://img.shields.io/badge/arXiv-1902.11284-red.svg
-   :alt: arXiv
-   :target: https://arxiv.org/abs/1902.11284
+.. image:: https://mybinder.org/badge_logo.svg
+   :alt: Launch Binder
+   :target: https://mybinder.org/v2/gh/qucontrol/krotov/v1.1.0?filepath=docs%2Fnotebooks
+.. image:: https://img.shields.io/badge/DOI-10.21468/SciPostPhys.7.6.080-blue.svg
+   :alt: DOI
+   :target: https://doi.org/10.21468/SciPostPhys.7.6.080
 
 
 .. toctree::
@@ -39,11 +42,13 @@ Welcome to the Krotov package's documentation!
    03_authors
    04_features
    05_history
-   06_krotovs_method
-   07_qutip_usage
-   08_examples
-   09_howto
-   10_other_methods
+   06_introduction
+   07_krotovs_method
+   08_qutip_usage
+   09_examples
+   10_howto
+   11_other_methods
+   12_related_software
    99_bibliography
 
 

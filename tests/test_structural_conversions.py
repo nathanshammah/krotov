@@ -7,13 +7,13 @@ import pytest
 import qutip
 
 import krotov
-from krotov.shapes import qutip_callback
-from krotov.structural_conversions import (
+from krotov.conversions import (
     discretize,
     extract_controls,
     extract_controls_mapping,
     pulse_options_dict_to_list,
 )
+from krotov.shapes import qutip_callback
 
 
 def test_conversion_control_pulse_inverse():
@@ -23,12 +23,12 @@ def test_conversion_control_pulse_inverse():
 
     blackman = qutip_callback(krotov.shapes.blackman, t_start=0, t_stop=10)
 
-    pulse_orig = krotov.structural_conversions.control_onto_interval(
+    pulse_orig = krotov.conversions.control_onto_interval(
         discretize(blackman, tlist)
     )
 
-    control = krotov.structural_conversions.pulse_onto_tlist(pulse_orig)
-    pulse = krotov.structural_conversions.control_onto_interval(control)
+    control = krotov.conversions.pulse_onto_tlist(pulse_orig)
+    pulse = krotov.conversions.control_onto_interval(control)
 
     assert np.max(np.abs(pulse - pulse_orig)) < 1e-14
 
@@ -72,7 +72,7 @@ def test_discretization_as_float():
     tlist = np.linspace(0, 10, 100)
 
     res = krotov.optimize._initialize_krotov_controls(
-        objectives, {u: dict(lambda_a=1, shape=lambda t: 0)}, tlist
+        objectives, {u: dict(lambda_a=1, update_shape=lambda t: 0)}, tlist
     )
 
     guess_controls = res[0]
@@ -97,7 +97,7 @@ def test_initialize_krotov_controls():
     blackman = qutip_callback(krotov.shapes.blackman, t_start=0, t_stop=T)
     H = ['H0', ['H1', blackman]]
     tlist = np.linspace(0, T, 10)
-    pulse_options = {blackman: dict(lambda_a=1.0, shape=1)}
+    pulse_options = {blackman: dict(lambda_a=1.0, update_shape=1)}
 
     objectives = [
         krotov.Objective(initial_state=qutip.Qobj(), target=None, H=H)
@@ -229,8 +229,8 @@ def test_pulse_options_dict_to_list(caplog):
     assert u2 is not u3
 
     pulse_options = {
-        id(u1): dict(lambda_a=1.0, shape=1),
-        id(u2): dict(lambda_a=2.0, shape=1),
+        id(u1): dict(lambda_a=1.0, update_shape=1),
+        id(u2): dict(lambda_a=2.0, update_shape=1),
     }
 
     pulse_options_list = pulse_options_dict_to_list(pulse_options, controls)
@@ -239,16 +239,16 @@ def test_pulse_options_dict_to_list(caplog):
     assert pulse_options_list[1] == pulse_options[id(u2)]
 
     # check error for missing pulse options
-    pulse_options = {id(u1): dict(lambda_a=1.0, shape=1)}
+    pulse_options = {id(u1): dict(lambda_a=1.0, update_shape=1)}
     with pytest.raises(ValueError) as exc_info:
         pulse_options_dict_to_list(pulse_options, controls)
     assert 'does not have any associated pulse options' in str(exc_info.value)
 
     # check warning message for extra pulse options
     pulse_options = {
-        id(u1): dict(lambda_a=1.0, shape=1),
-        id(u2): dict(lambda_a=1.0, shape=1),
-        id(u3): dict(lambda_a=1.0, shape=1),
+        id(u1): dict(lambda_a=1.0, update_shape=1),
+        id(u2): dict(lambda_a=1.0, update_shape=1),
+        id(u3): dict(lambda_a=1.0, update_shape=1),
     }
     with caplog.at_level(logging.WARNING):
         pulse_options_dict_to_list(pulse_options, controls)
@@ -258,7 +258,7 @@ def test_pulse_options_dict_to_list(caplog):
 def test_control_tlist_calculation():
     """Test calculation of tlist_midpoints for non-equidistant time grid"""
     tlist = np.array([0, 1.0, 2.0, 2.2])
-    midpoints = krotov.structural_conversions._tlist_midpoints(tlist)
+    midpoints = krotov.conversions._tlist_midpoints(tlist)
     assert len(midpoints) == len(tlist) - 1
     assert midpoints[0] == 0.5
     assert midpoints[1] == 1.5

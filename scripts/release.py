@@ -2,21 +2,22 @@
 """Automation script for making a release. Must be run from the root for the
 repository"""
 # Note: Version scheme according to https://www.python.org/dev/peps/pep-0440
-import os
-from os.path import join
-import sys
-import re
-from subprocess import run, DEVNULL, CalledProcessError
-from pkg_resources import parse_version
 import json
-import urllib.request
+import os
+import re
+import shutil
+import sys
 import urllib.error
 import urllib.parse
-import shutil
+import urllib.request
+from os.path import join
+from subprocess import DEVNULL, CalledProcessError, run
+from textwrap import dedent
 
-import pytest
-import git
 import click
+import git
+import pytest
+from pkg_resources import parse_version
 
 
 RX_VERSION = re.compile(
@@ -25,9 +26,34 @@ RX_VERSION = re.compile(
     r'(?P<devsuffix>[+-]dev)?$'
 )
 
+RX_NBVIEWER_URL = re.compile(
+    r'(?P<baseurl>https?://nbviewer\.jupyter\.org/[\w/-]+/blob/)'
+    r'(?P<branch>[\w.-]+)(?P<path>[\w%/.-]+)'
+)
+RX_BINDER_URL = re.compile(
+    r'(?P<baseurl>https?://mybinder\.org/v\d/[\w/-]+/)'
+    r'(?P<branch>[\w.-]+)(?P<path>\?filepath=[\w%/.-]+)'
+)
 
-def make_release(package_name):
-    """Interactively create and publish a new release for the package"""
+RX_STABLE_DOCS_LINK = re.compile(
+    r'''
+    (?P<baseurl>
+      https://(?P<orgname>[\w-]+)\.github\.io/(?P<projname>[\w-]+)/)
+    (?P<version>v\d[\w.-]+)
+    (?P<path>/[\w%/.#-]+)
+    ''',
+    re.X,
+)
+
+
+def make_release(package_name, fast_test=False):
+    """Interactively create and publish a new release for the package.
+
+    If `fast_test` is passed as True, do a fast test-run of the release script.
+    This skips testing, and verification, does not push any
+    commits, and make no releases on PyPI. It does make local commits, which
+    should be reset after the script completes.
+    """
     click.confirm("Do you want to make a release?", abort=True)
     check_git_clean()
     new_version = ask_for_release_version(package_name)
@@ -37,19 +63,42 @@ def make_release(package_name):
         click.confirm(
             "Fix errors manually! Continue?", default=True, abort=True
         )
+    files_with_binder_links = [
+        'README.rst',
+        join('docs', '09_examples.rst'),
+        join('docs', 'index.rst'),
+    ]
+    for filename in files_with_binder_links:
+        set_binder_branch(filename, "v" + str(new_version))
+    set_binder_package_version(version=new_version)
+    set_stable_docs_links(new_version, 'README.rst', 'docs/_README.patch')
     make_release_commit(new_version)
-    make_notebooks()
-    check_docs()
-    run_tests()
+    make_notebooks(fast_test=fast_test)
     make_notebooks_commit(new_version)
-    make_upload(test=True)
-    push_release_commits()
-    make_upload(test=False)
-    make_and_push_tag(new_version)
+    squash_commits(n=2, commit_msg="Release %s" % new_version)
+    if not fast_test:
+        make_artifacts()
+        run_tests()
+        make_upload(test=True)
+        push_release_commits()
+        make_upload(test=False)
+        make_and_push_tag(new_version)
+    upload_artifacts(new_version)
+    # release is finished; go back to a dev state
     next_dev_version = new_version + '+dev'
     set_version(
         join('.', 'src', package_name, '__init__.py'), next_dev_version
     )
+    files_with_released_binder_links = [
+        'README.rst',
+        join('docs', 'index.rst'),
+    ]
+    for filename in files_with_binder_links:
+        if filename in files_with_released_binder_links:
+            # README and index always link to the latest released version
+            continue
+        set_binder_branch(filename, 'master')
+    set_binder_package_version(branch='master')
     make_next_dev_version_commit(next_dev_version)
 
 
@@ -98,14 +147,14 @@ def get_version(filename):
 
 
 def edit(filename):
-    """Open filename in EDITOR"""
+    """Open filename in EDITOR."""
     editor = os.getenv('EDITOR', 'vi')
     if click.confirm("Open %s in %s?" % (filename, editor), default=True):
         run([editor, filename])
 
 
 def check_git_clean():
-    """Ensure that a given git.Repo is clean"""
+    """Ensure that a given git.Repo is clean."""
     repo = git.Repo(os.getcwd())
     if repo.is_dirty():
         run(['git', 'status'])
@@ -118,8 +167,20 @@ def check_git_clean():
 
 
 def run_tests():
-    """Run 'make test'"""
-    run(['make', 'test'], check=True)
+    """Run 'make test'."""
+    success = False
+    while not success:
+        try:
+            run(['make', 'test'], check=True)
+        except CalledProcessError as exc_info:
+            print("Failed tests: %s\n" % exc_info)
+            print("Fix the tests and ammend the release commit.")
+            print("Then continue.\n")
+            click.confirm("Continue?", default=True, abort=True)
+            if not click.confirm("Retry?", default=True):
+                break
+        else:
+            success = True
 
 
 def split_version(version, base=True):
@@ -261,6 +322,76 @@ def set_version(filename, version):
         raise ReleaseError(msg)
 
 
+def set_binder_branch(filename, branch='master'):
+    """Search for nbviewer/binder URLs and replace their branch name"""
+    shutil.copyfile(filename, filename + '.bak')
+    click.echo(
+        "Modifying %s to set branch %s in binder/nbviewer URLs"
+        % (filename, branch)
+    )
+    with open(filename + '.bak') as in_fh, open(filename, 'w') as out_fh:
+        for line in in_fh:
+            line = RX_NBVIEWER_URL.sub(r'\g<1>%s\g<3>' % branch, line)
+            line = RX_BINDER_URL.sub(r'\g<1>%s\g<3>' % branch, line)
+            out_fh.write(line)
+    os.remove(filename + ".bak")
+
+
+def set_binder_package_version(version=None, branch=None):
+    """Set the version of the krotov package in binder/environment.yml.
+
+    Either a `version` must be given, in which case Binder dependes on
+    ``krotov==<version>``, or `branch`, in which case Binder depens on
+    ``git+https://github.com/qucontrol/krotov.git@<branch>#egg=krotov``.
+    """
+    filename = 'binder/environment.yml'
+    shutil.copyfile(filename, filename + '.bak')
+    # fmt: off
+    with open(filename + '.bak') as in_fh, open(filename, 'w') as out_fh:
+        for line in in_fh:
+            if line.startswith('    - ') and 'krotov' in line:
+                if version is not None:
+                    click.echo("Modifying %s to set krotov version %s" % (filename, version))
+                    line = '    - krotov==%s' % version
+                elif branch is not None:
+                    click.echo("Modifying %s to set krotov branch %s" % (filename, branch))
+                    line = '    - git+https://github.com/qucontrol/krotov.git@%s#egg=krotov' % branch
+                else:
+                    raise ValueError("You must give either a version or a branch")
+            out_fh.write(line)
+    # fmt: on
+    os.remove(filename + ".bak")
+
+
+def set_stable_docs_links(version, *files):
+    """Replace documentation-links in the given files to point to stable.
+
+    Replace all strings that match RX_STABLE_DOCS_LINK with the correct
+    projname with a URL that points to `version`.
+    """
+    projname = get_package_name()
+    for filename in files:
+        shutil.copyfile(filename, filename + '.bak')
+        with open(filename + '.bak') as in_fh, open(filename, 'w') as out_fh:
+            for line in in_fh:
+                replacements = {}
+                for m in RX_STABLE_DOCS_LINK.finditer(line):
+                    if m.group('projname') == projname:
+                        replacements[m.group(0)] = (
+                            m.group('baseurl')
+                            + 'v%s' % version
+                            + m.group('path')
+                        )
+                for url, replacement in replacements.items():
+                    click.echo(
+                        "In %s, replace '%s' → '%s'"
+                        % (filename, url, replacement)
+                    )
+                    line = line.replace(url, replacement)
+                out_fh.write(line)
+        os.remove(filename + ".bak")
+
+
 def edit_history(version):
     """Interactively edit HISTORY.rst"""
     click.echo(
@@ -283,24 +414,35 @@ def check_dist():
         return False
 
 
-def make_notebooks():
+def make_notebooks(fast_test=False):
+    """Re-run all notebooks in the documentation.
+
+    If `fast_test` is given as True, only the first notebook is run.
+    """
     click.echo("Re-creating notebooks...")
+    target = 'notebooks'
+    if fast_test:
+        # only make the first notebook
+        target = 'docs/notebooks/01_example_simple_state_to_state.ipynb.log'
     try:
-        run(['make', 'notebooks'], check=True)
+        run(['make', target], check=True)
         return True
     except CalledProcessError as exc_info:
         click.echo("ERROR: %s" % str(exc_info))
         return False
 
 
-def check_docs():
-    """Verify the documentation (interactively)"""
+def make_artifacts():
+    """Verify the documentation (interactively)."""
     click.echo("Making the documentation....")
-    run(['make', 'docs'], check=True, stdout=DEVNULL)
+    run(['make', 'docs-artifacts'], check=True, stdout=DEVNULL)
     click.echo(
         "Check documentation in file://"
         + os.getcwd()
         + "/docs/_build/html/index.html"
+        + " and the artifacts in "
+        + os.getcwd()
+        + "/docs/_build/artifacts"
     )
     click.confirm(
         "Does the documentation look correct?", default=True, abort=True
@@ -337,6 +479,24 @@ def make_notebooks_commit(version):
     )
 
 
+def squash_commits(n, commit_msg=None):
+    """Squash release commits"""
+    msg = (
+        "Ready to squash %d release commits (change 'pick' to 's' for all "
+        "but first commit)?" % n
+    )
+    if commit_msg:
+        msg = (
+            "Ready to squash %d release commits (change 'pick' to 's' for all "
+            "but first commit, use '%s' as the commmit message')?"
+            % (n, commit_msg)
+        )
+    click.confirm(
+        msg, default=True, abort=True,
+    )
+    run(['git', 'rebase', '--interactive', 'HEAD~%d' % n], check=True)
+
+
 def make_upload(test=True):
     """Upload to PyPI or test.pypi"""
     if test:
@@ -369,7 +529,7 @@ def make_upload(test=True):
 
 
 def push_release_commits():
-    """Push local commits to origin"""
+    """Push local commits to origin."""
     click.confirm("Push release commit to origin?", default=True, abort=True)
     run(['git', 'push', 'origin', 'master'], check=True)
     click.confirm(
@@ -380,7 +540,7 @@ def push_release_commits():
 
 
 def make_and_push_tag(version):
-    """Tag the current commit and push that tag to origin"""
+    """Tag the current commit and push that tag to origin."""
     click.confirm(
         "Push tag '%s' to origin?" % version, default=True, abort=True
     )
@@ -388,8 +548,28 @@ def make_and_push_tag(version):
     run(['git', 'push', '--tags', 'origin'], check=True)
 
 
+def upload_artifacts(version):
+    """Prompt for manually uploading documentation artifacts."""
+    # fmt: off
+    click.echo(dedent(r'''
+    You must now manually create a release on Github and upload the
+    documentation artifacs from docs/_build/artifacts.
+
+    * Go to https://github.com/qucontrol/krotov/releases
+    * Find and click on the tag 'v{version}'
+    * Click on "Edit tag"
+    * Use "Release {version}" as the Release title
+    * Add release notes in markdown format
+    * Attach the documentation artifacs as binary files
+    * Click "Publish release"
+
+    '''.format(version=version)))
+    # fmt: on
+    click.confirm("Release published on Github?", default=True)
+
+
 def make_next_dev_version_commit(version):
-    """Commit 'Bump version to xxx'"""
+    """Commit 'Bump version to xxx'."""
     click.confirm(
         "Make commit for bumping to %s?" % version, default=True, abort=True
     )
@@ -482,14 +662,69 @@ def test_propose_next_version():
     assert propose_next_version('0.1.0.post1+dev') == '0.1.1'
 
 
+def test_nbviewer_binder_regexes():
+    url_nbviewer = (
+        r'http://nbviewer.jupyter.org/github/qucontrol/krotov/'
+        r'blob/master/docs/notebooks/'
+        r'03_example_lambda_system_rwa_non_hermitian.ipynb'
+    )
+    url_binder = (
+        r'https://mybinder.org/v2/gh/qucontrol/krotov/master'
+        r'?filepath=docs/notebooks/'
+        r'03_example_lambda_system_rwa_non_hermitian.ipynb'
+    )
+
+    match = RX_NBVIEWER_URL.match(url_nbviewer)
+    assert match
+    assert (
+        match.group('baseurl')
+        == 'http://nbviewer.jupyter.org/github/qucontrol/krotov/blob/'
+    )
+    assert match.group('branch') == 'master'
+    assert (
+        match.group('path')
+        == '/docs/notebooks/03_example_lambda_system_rwa_non_hermitian.ipynb'
+    )
+    new_url_nbviewer = RX_NBVIEWER_URL.sub(
+        r'\g<1>%s\g<3>' % 'v0.1.0', url_nbviewer
+    )
+    assert new_url_nbviewer == (
+        r'http://nbviewer.jupyter.org/github/qucontrol/krotov/blob/v0.1.0/'
+        r'docs/notebooks/03_example_lambda_system_rwa_non_hermitian.ipynb'
+    )
+    assert RX_NBVIEWER_URL.match(new_url_nbviewer).group('branch') == 'v0.1.0'
+
+    match = RX_BINDER_URL.match(url_binder)
+    assert match
+    assert (
+        match.group('baseurl')
+        == 'https://mybinder.org/v2/gh/qucontrol/krotov/'
+    )
+    assert match.group('branch') == 'master'
+    assert match.group('path') == (
+        r'?filepath=docs/notebooks/'
+        r'03_example_lambda_system_rwa_non_hermitian.ipynb'
+    )
+    new_url_binder = RX_BINDER_URL.sub(r'\g<1>%s\g<3>' % 'v0.1.0', url_binder)
+    assert new_url_binder == (
+        r'https://mybinder.org/v2/gh/qucontrol/krotov/v0.1.0'
+        r'?filepath=docs/notebooks/'
+        r'03_example_lambda_system_rwa_non_hermitian.ipynb'
+    )
+    assert RX_BINDER_URL.match(new_url_binder).group('branch') == 'v0.1.0'
+
+
 ###############################################################################
 
 
 @click.command(help=__doc__)
 @click.help_option('--help', '-h')
-def main():
+@click.option(
+    '--test', is_flag=True, help="Do a fast test-run of the release script"
+)
+def main(test):
     try:
-        make_release(get_package_name())
+        make_release(get_package_name(), fast_test=bool(test))
     except Exception as exc_info:
         click.echo(str(exc_info))
         sys.exit(1)

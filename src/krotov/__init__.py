@@ -11,46 +11,55 @@ functionals, convergence checks, analysis tools, and propagators, as well as
 more technical routines for parallelization, low-level data conversion, and
 estimators for second-order updates.
 """
+# fmt: off
 
-__version__ = '0.3.0+dev'
+__version__ = '1.1.0+dev'
 
 __arxiv__ = '1902.11284'
 
 __citation__ = (
-    "M. H. Goerz et al., Krotov: A Python implementation of Krotov's method for quantum optimal control, arXiv:%s (2019)"
-    % __arxiv__
+    "M. H. Goerz et al., "
+    "Krotov: A Python implementation of Krotov's method for quantum optimal "
+    "control, "
+    "SciPost Phys. 7, 080 (2019)"
 )
 
 __bibtex__ = r'''
-@article{arxiv1902.11284,
+@article{GoerzSPP2019,
     author = {Michael H. Goerz and Daniel Basilewitsch and Fernando Gago-Encinas and Matthias G. Krauss and Karl P. Horn and Daniel M. Reich and Christiane P. Koch},
     title = {Krotov: A {Python} implementation of {Krotov's} method for quantum optimal control},
-    year = {2019},
-    journal = {arXiv:1902.11284},
+    journal={SciPost Phys.},
+    volume={7},
+    pages={80},
+    year={2019},
+    doi={10.21468/SciPostPhys.7.6.080},
 }
 '''.strip()
 
-
 # expose submodules for easy import
-from . import shapes
-from . import structural_conversions
-from . import propagators
-from . import functionals
-from . import info_hooks
-from . import objectives
-from . import mu
-from . import result
-from . import convergence
-from . import second_order
-from . import parallelization
-
+from . import (
+    convergence,
+    conversions,
+    functionals,
+    info_hooks,
+    mu,
+    objectives,
+    parallelization,
+    propagators,
+    result,
+    second_order,
+    shapes,
+)
 # expose primary classes/functions
-from .objectives import Objective, gate_objectives, ensemble_objectives
+from .objectives import Objective, ensemble_objectives, gate_objectives
 from .optimize import optimize_pulses
+from .result import Result
+
 
 __all__ = [
-    'optimize_pulses',
     'Objective',
-    'gate_objectives',
+    'Result',
     'ensemble_objectives',
+    'gate_objectives',
+    'optimize_pulses',
 ]

@@ -25,36 +25,53 @@ except OSError:
     history = ''
 
 # requirements for use
-requirements = ['glom', 'numpy', 'scipy', 'qutip', 'uniseg']
+requirements = [
+    'glom',
+    'numpy',
+    'scipy',
+    'qutip>=4.3.1',
+    'threadpoolctl',
+    'uniseg',
+]
+if sys.platform != 'linux':
+    requirements.append('loky')
 
 # requirements for development (testing, generating docs)
 dev_requirements = [
+    'better-apidoc==0.3.1',
     'click',
-    'coverage',
+    'codecov',
+    'coverage<5.0',
+    # https://github.com/computationalmodelling/nbval/issues/129
+    'doctr',
+    'doctr-versions-menu',
     'flake8',
     'gitpython',
     'isort',
     'jupyter',
+    'loky',
     'matplotlib',
     'nbsphinx',
     'nbval',
     'pre-commit',
+    'pybtex',
     'pylint',
     'pytest',
     'pytest-cov<=2.6.1',
     'pytest-xdist',
     'sphinx',
     'sphinx-autobuild',
+    'sphinx-copybutton',
     'sphinx_rtd_theme',
     'sphinxcontrib-bibtex',
     'twine',
     'watermark',
-    'weylchamber>=0.3.1',
+    'weylchamber>=0.3.2',
     'wheel',
 ]
-dev_requirements.append('better-apidoc==0.3.1')
 if sys.version_info >= (3, 6):
     dev_requirements.append('black')
+    dev_requirements.append('zip-files')
 
 # some recommended packages that make development nicer
 dev_extras = ['jupyterlab', 'pdbpp']
@@ -65,7 +82,7 @@ setup(
     author="Michael Goerz",
     author_email='mail@michaelgoerz.net',
     classifiers=[
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Education',
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: BSD License',
@@ -73,6 +90,7 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
         'Framework :: Jupyter',
         'Natural Language :: English',
         'Operating System :: OS Independent',

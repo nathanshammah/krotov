@@ -1,17 +1,22 @@
+"""Module defining the :class:`Result` object that is returned by
+:func:`.optimize_pulses`.
+"""
+import copyreg
+import datetime
 import logging
 import pickle
 import time
 from textwrap import dedent
 
-from .objectives import Objective, _ControlPlaceholder
-from .structural_conversions import _nested_list_shallow_copy, pulse_onto_tlist
+from .conversions import _nested_list_shallow_copy, pulse_onto_tlist
+from .objectives import Objective, _ControlPlaceholder, _Objective_reduce
 
 
 __all__ = ['Result']
 
 
 class Result:
-    """Result object for a Krotov optimization
+    """Result of a Krotov optimization with :func:`.optimize_pulses`.
 
     Attributes:
         objectives (list[Objective]): The control objectives
@@ -22,7 +27,7 @@ class Result:
         info_vals (list): For each iteration, the return value of `info_hook`,
             or None
         tau_vals (list[list[complex]): for each iteration, a list of complex
-            overlaps between the forward-propagated state and the target state
+            overlaps between the target state and the forward-propagated state
             for each objective, assuming :attr:`.Objective.target` contains the
             target state. If there is no target state, an empty list.
         guess_controls (list[numpy.ndarray]): List of the guess controls in
@@ -81,12 +86,18 @@ class Result:
         - Number of objectives: {n_objectives}
         - Number of iterations: {n_iters}
         - Reason for termination: {message}
-        - Ended at {end_local_time}
+        - Ended at {end_local_time} ({time_delta})
         '''.format(
                 start_local_time=self.start_local_time_str,
                 n_objectives=len(self.objectives),
                 n_iters=len(self.iters) - 1,  # do not count zero iteration
                 end_local_time=self.end_local_time_str,
+                time_delta=str(
+                    datetime.timedelta(
+                        seconds=time.mktime(self.end_local_time)
+                        - time.mktime(self.start_local_time)
+                    )
+                ),
                 message=self.message,
             )
         ).strip()
@@ -113,17 +124,53 @@ class Result:
     @property
     def optimized_objectives(self):
         """list[Objective]: A copy of the :attr:`objectives` with the
-        :attr:`optimized_controls` plugged in"""
+        :attr:`optimized_controls` plugged in."""
+        return self.objectives_with_controls(self.optimized_controls)
+
+    def objectives_with_controls(self, controls):
+        """List of objectives with the given `controls` plugged in.
+
+        Args:
+            controls (list[numpy.ndarray]): A list of control fields, defined
+                on the points of :attr:`tlist`. Must be of the same length as
+                :attr:`guess_controls` and :attr:`optimized_controls`.
+
+        Returns:
+            list[Objective]: A copy of :attr:`objectives`, where all control
+            fields are replaced by the elements of the `controls`.
+
+        Raises:
+            ValueError: If `controls` does not have the same number controls as
+                :attr:`guess_controls` and :attr:`optimized_controls`, or if
+                any `controls` are not defined on the points of the time grid.
+
+        See also:
+            For plugging in the optimized controls, the
+            :attr:`optimized_objectives` attribute is equivalent to
+            ``result.objectives_with_controls(result.optimized_controls)``.
+        """
+        n = len(self.guess_controls)
+        m = len(controls)
+        if n != m:
+            raise ValueError("Expected %d controls, %d given" % (n, m))
+        for control in controls:
+            try:
+                if len(control) != len(self.tlist):
+                    raise ValueError(
+                        "controls are not defined on the points of the time "
+                        "grid: control has %d values for %d time grid points"
+                        % (len(control), len(self.tlist))
+                    )
+            except TypeError:
+                pass  # control is not a numpy array (but maybe a callable)
         objectives = []
         for (i, obj) in enumerate(self.objectives):
             H = _plug_in_optimized_controls(
-                obj.H, self.optimized_controls, self.controls_mapping[i][0]
+                obj.H, controls, self.controls_mapping[i][0]
             )
             c_ops = [
                 _plug_in_optimized_controls(
-                    c_op,
-                    self.optimized_controls,
-                    self.controls_mapping[i][j + 1],
+                    c_op, controls, self.controls_mapping[i][j + 1]
                 )
                 for (j, c_op) in enumerate(obj.c_ops)
             ]
@@ -206,7 +253,10 @@ class Result:
             filename (str): Name of file to which to dump the :class:`Result`.
         """
         with open(filename, 'wb') as dump_fh:
-            pickle.dump(self, dump_fh)
+            pickler = pickle.Pickler(dump_fh)
+            pickler.dispatch_table = copyreg.dispatch_table.copy()
+            pickler.dispatch_table[Objective] = _Objective_reduce
+            pickler.dump(self)
 
 
 def _contains_control_placeholders(lst):

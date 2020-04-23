@@ -37,6 +37,10 @@ collapse operators into account explicitly, such as in the Monte-Carlo
 :func:`~qutip.mcsolve.mcsolve`.  Otherwise, the use of
 :attr:`~.Objective.c_ops` is strongly discouraged.
 
+If the control function (``eps`` in the above example) relies on the dict
+``args`` for static parameters, those ``args`` can be specified via the
+`pulse_options` argument in :func:`.optimize_pulses`. See :ref:`HowtoUseArgs`.
+
 In order to simulate the dynamics of the guess control, you can use
 :meth:`.Objective.mesolve`, which delegates to :func:`qutip.mesolve.mesolve`.
 There is also a related method :meth:`.Objective.propagate` that uses a
@@ -47,7 +51,7 @@ find in the objectives, and iteratively calculate updates to all controls in
 order to meet all `objectives` simultaneously. The result of the optimization
 will be in the returned :class:`.Result` object, with a list of the optimized
 controls in :attr:`~.Result.optimized_controls`.
-The :attr:`~.Result.optimized_objectives` property contains a copy of the
+The :obj:`~.Result.optimized_objectives` property contains a copy of the
 objectives with the :attr:`~.Result.optimized_controls` plugged into the
 Hamiltonian or Liouvillian and/or collapse operators. The dynamics under the
 optimized controls can then again be simulated through

@@ -10,6 +10,12 @@ from qutip import ket
 import krotov
 
 
+try:
+    import qutip.qip.gates as qutip_gates
+except ImportError:
+    import qutip.qip.operations.gates as qutip_gates
+
+
 @pytest.fixture
 def canonical_basis():
     return [ket('00'), ket('01'), ket('10'), ket('11')]
@@ -18,7 +24,7 @@ def canonical_basis():
 @pytest.fixture
 def sqrt_SWAP_basis(canonical_basis):
     return krotov.functionals.mapped_basis(
-        qutip.gates.sqrtswap(), canonical_basis
+        qutip_gates.sqrtswap(), canonical_basis
     )
 
 
@@ -26,7 +32,7 @@ def sqrt_SWAP_basis(canonical_basis):
 def cphase_objectives(canonical_basis):
     H = qutip.Qobj()  # dummy Hamiltonian (won't be used)
     return krotov.objectives.gate_objectives(
-        canonical_basis, gate=qutip.gates.cphase(np.pi), H=H
+        canonical_basis, gate=qutip_gates.cphase(np.pi), H=H
     )
 
 
@@ -35,7 +41,7 @@ def cphase_lv_full_objectives(canonical_basis):
     L = qutip.Qobj()  # dummy Liouvillian (won't be used)
     return krotov.objectives.gate_objectives(
         canonical_basis,
-        gate=qutip.gates.cphase(np.pi),
+        gate=qutip_gates.cphase(np.pi),
         H=L,
         liouville_states_set='full',
     )
@@ -45,7 +51,7 @@ def cphase_lv_full_objectives(canonical_basis):
 def iswap_state_objectives(canonical_basis):
     H = qutip.Qobj()  # dummy Hamiltonian (won't be used)
     objectives = krotov.gate_objectives(
-        canonical_basis, qutip.gates.sqrtiswap(), H
+        canonical_basis, qutip_gates.sqrtiswap(), H
     )
     return objectives
 
@@ -63,7 +69,7 @@ def transmon_3states_objectives():
     weights = [20, 1, 1]
     objectives = krotov.gate_objectives(
         basis,
-        qutip.gates.sqrtiswap(),
+        qutip_gates.sqrtiswap(),
         L,
         liouville_states_set='3states',
         weights=weights,
@@ -71,18 +77,30 @@ def transmon_3states_objectives():
     return objectives
 
 
+def test_mapped_basis_preserves_hs_structure():
+    """Test that mapped_basis preserves the hilbert space structure of the
+    input basis."""
+    basis = [ket(nums) for nums in [(0, 0), (0, 1), (1, 0), (1, 1)]]
+    states = krotov.functionals.mapped_basis(qutip_gates.cnot(), basis)
+    for state in states:
+        assert isinstance(state, qutip.Qobj)
+        assert state.dims == basis[0].dims
+        assert state.shape == basis[0].shape
+        assert state.type == basis[0].type
+
+
 def test_f_tau_with_weights(sqrt_SWAP_basis, cphase_objectives):
     tau_vals = [
-        psi.overlap(obj.target)
+        obj.target.overlap(psi)
         for (psi, obj) in zip(sqrt_SWAP_basis, cphase_objectives)
     ]
     assert abs(tau_vals[0] - (1 + 0j)) < 1e-14
-    assert abs(tau_vals[1] - (0.5 - 0.5j)) < 1e-14
-    assert abs(tau_vals[2] - (0.5 - 0.5j)) < 1e-14
+    assert abs(tau_vals[1] - (0.5 + 0.5j)) < 1e-14
+    assert abs(tau_vals[2] - (0.5 + 0.5j)) < 1e-14
     assert abs(tau_vals[3] - (-1 + 0j)) < 1e-14
 
     F = krotov.functionals.f_tau(sqrt_SWAP_basis, cphase_objectives)
-    assert abs(F - ((1 - 1j) / 4)) < 1e-14
+    assert abs(F - ((1 + 1j) / 4)) < 1e-14
 
     objectives = copy.deepcopy(cphase_objectives)
 
@@ -91,7 +109,7 @@ def test_f_tau_with_weights(sqrt_SWAP_basis, cphase_objectives):
     objectives[2].weight = 0.5
     objectives[3].weight = 0
     F = krotov.functionals.f_tau(sqrt_SWAP_basis, objectives)
-    assert abs(F - ((2.25 - 1.25j) / 4)) < 1e-14
+    assert abs(F - ((2.25 + 1.25j) / 4)) < 1e-14
 
     # make sure we didn't inadvertently modify the original objectives
     for obj in cphase_objectives:
@@ -288,7 +306,7 @@ def test_F_avg_psi(sqrt_SWAP_basis, canonical_basis):
     F = krotov.functionals.F_avg(
         fw_states_T=sqrt_SWAP_basis,
         basis_states=canonical_basis,
-        gate=qutip.gates.cphase(np.pi),
+        gate=qutip_gates.cphase(np.pi),
     )
     assert abs(F - 0.3) < 1e-14
 
@@ -301,6 +319,6 @@ def test_F_avg_rho(sqrt_SWAP_basis, canonical_basis):
     F = krotov.functionals.F_avg(
         fw_states_T=fw_states_T,
         basis_states=canonical_basis,
-        gate=qutip.gates.cphase(np.pi),
+        gate=qutip_gates.cphase(np.pi),
     )
     assert abs(F - 0.3) < 1e-14
